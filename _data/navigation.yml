@@ -6,11 +6,11 @@
 
 main:
   - title: "Resources"
-  - url: /publications/
+    url: /publications/
 
   - title: "Pipelines"
-  - url: /pipelines/
-  #
+    url: /pipelines/
+
   - title: "Publications"
     url: /publications/
   #
