@@ -9,7 +9,7 @@ redirect_from:
 
 Explain the purpose of the site and the above tabs.
 
-[Dataset Resources](https://uofm-ophthalmology.github.io/resources)
+[Dataset Resources](/resources)
 
 Who I am
 ======
