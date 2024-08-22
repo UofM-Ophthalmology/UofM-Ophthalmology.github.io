@@ -6,7 +6,7 @@
 
 main:
   - title: "Dataset Resources"
-  - url: /resources/
+  - url: /publications/
 
   - title: "Pipelines"
   - url: /pipelines/
