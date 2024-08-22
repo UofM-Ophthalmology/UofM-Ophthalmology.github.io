@@ -1,8 +1,12 @@
 ---
-permalink: /markdown/
-title: "Markdown"
+permalink: /resources/
+title: "Resources"
 author_profile: true
 redirect_from:
-  - /md/
-  - /markdown.html
+  - /res/
+  - /resources.html
 ---
+
+# Resources Pages
+
+## Shared from Lev & Jason
