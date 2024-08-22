@@ -30,7 +30,7 @@ sadf
 
 yandex_site_verification
 
-# Transcriptomics
+# [Transcriptomics](#transcriptomics)
 
 ## Bulk RNA
 
