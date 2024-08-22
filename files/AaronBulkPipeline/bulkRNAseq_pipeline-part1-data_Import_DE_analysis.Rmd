@@ -1,0 +1,327 @@
+---
+title: "Bulk RNA-seq pipeline part 1 - Importing raw reads with tximport and performing DE analysis with DESeq2"
+output: html_document
+date: "2024-05-03"
+---
+
+# 1. Introduction
+
+This document assumes that you are going to perform differential expression analysis on bulk RNA-seq data from gene or transcript counts generated from RSEM. However, the tximport package used here can be used for almost any abundance estimation tool. The code will have to be slightly adjusted based on what is used and the output will be slightly different.
+
+Additionally, This module involves importing counts/abundance data from multiple samples, differential expression analysis for a given comparison with DESeq2, and principle component (PCA) and UMAP analyses. If you are looking to perform more complex visualizations or analyses, those will be included in a separate module.
+
+# 2. Load and compile dependencies
+
+We're first going to load all the packages we need for importing the data and performing the differential expression analysis. Additional packages will be loaded later as needed. If packages are not already installed, you will need to install BiocManager (if not already available) then use the BiocManager::install() function to install the required packages.
+
+```{r loadlib, echo=T, results='hide', message=F, warning=F}
+## The settings are set to not print warnings or messages on the HTML document. If you have issues with compiling the packages, go back to the RStudio code and modify the settings for this particular chunk of code
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+library(BiocManager)
+
+packages <- c("tximport", "DESeq2")
+installed<- packages %in% rownames(installed.packages())
+
+if (any(installed == FALSE)) {
+  BiocManager::install(!installed)
+}
+
+library(tximport)
+library(DESeq2)
+```
+
+# 3. Set the working directory and read in the files
+
+### 3.1 Set your working directory
+
+Set your working directory to the directory containing the .genes.results files that were generated with RSEM.
+
+Structure your working directory so that there is a sub-directory inside that contains just the .genes.results files. For example, I'm working in the "Miller_RNAseq" directory and inside that directory is a directory named "genes.results_files" that contains just the aligned and counted genes.results files.
+
+**Note: The code chunk below is used to set the working directory for a Markdown file. This method won't work if you are working outside of the Rmarkdown environment. If you are a working in an R notebook or on the R console, you will need to use *setwd()* to set your working directory.**
+```{r setup}
+knitr::opts_knit$set(root.dir = '/Users/aaron/Dropbox (Personal)/Protocols/Bioinformatics/Bioinformatics_Scripts_From_Aaron/Bioinformatics Resources/')
+
+## setwd('/Users/aaron/Dropbox (Personal)/Aaron_denDekker/BFX/Miller_RNAseq/') ## this is the code to change the working directory if you are working in an R notebook or on the R console.
+
+
+```
+
+
+### 3.2 Read in the sample table
+
+You will need to create a table that defines your groups. The table can be made in R or coded in on a text editor, but the easiest and most straight-forward way is to make a table using Excel or some other spreadsheet software and then save it as a CSV file. **Make sure to save the table into the working directory**
+
+There can be more that one grouping in the table. For example, you may have control and treatment samples that are from different cohorts and you may want to analyze them as control vs treatment and also confirm that there are no batch effects due to the cohort. You just have to declare what comparison you want to do when performing the differential analysis (more on that later).
+
+```{r}
+samples<-read.csv("sampleTable.csv")
+```
+
+DEseq2 requires the rownames of the sample table to be identical to the colnames in the txi object (to follow). We simply need to mutate the rownames to the sample IDs:
+
+```{r}
+row.names(samples)<-samples$sample
+samples ##just printing an example to show how I've structured the table
+```
+
+### 3.3 Assign file paths for each sample to a list
+
+Next, we're going to assign the file path and file names to a list so that we can import them. Creating the list of files
+
+```{r}
+## First assign the path to sub-directory containing the genes.results files:
+dir<-file.path("/Users/aaron/Dropbox (Personal)/Aaron_denDekker/BFX/Miller_RNAseq/genes.results_files") 
+## I've coded this as the full path name rather than use relative path. It could also be coded as: 
+## dir<-file.path("./genes.results_files") ## here the ./ acts as the working directory path
+
+## Next, assign all of the file names with there absolute path to a list object names "files"
+files <- file.path(dir, paste0(samples$ID, ".genes.results")) 
+## This bit of code just takes the names listed in the ID column of the samples object and appended .genes.results to each. 
+
+head(files,5) ## printing the first 5 rows of "files" to show what it contains:
+```
+
+### 3.4 Assign the sample IDs as rownames to the sample file
+
+Now we must assign the sample ID as the rowname for each row in the "files" object. This is required as tximport assigns the counts with each sample and uses the rowname as the identifier. *If there is no rowname assigned, tximport will report an error*
+
+We just take the data in the *sample* column from the "samples" table and append a new column to the "files" object containing the sample ID for each.
+
+```{r }
+names(files)<-samples$sample
+```
+
+### 3.5 Read in the genes.results for each sample.
+
+One of the easiest methods to read in count/abundance data is to use the tximport tool:
+
+```{r echo=T, results='hide', message=F, warning=F}
+rsem_counts<-tximport(files, type = "rsem", txIn = FALSE, txOut = FALSE)
+## tximport is designed to import gene and transcript quants from several different count estimation tools. Here, we've used it for RSEM data as declared in the "type" argument. For more information on tximport simply type ??tximport
+```
+
+The object created by tximport generates 4 different types of data: abundance, counts, lengths, and countsFromAbundance. There are differences depending on the count estimation tool used to quantify. Abundance is typically given as TPM (transcripts-per-million) depending on the tool used, counts are estimated counts for each gene for each sample, and length is the transcript length for each gene. In our case for RSEM, countsFromAbundance data is not generated.
+
+```{r}
+rsem_counts$abundance[1:5,1:4] ## peek at the top 5 rows and first 4 columns of abundance
+rsem_counts$counts[1:5,1:4] ## peek at the top 5 rows and first 4 columns of counts
+rsem_counts$length[1:5,1:4] ## peek at the top 5 rows and first 4 columns of length
+
+## I've included this just to show the layout of the data in the counts object.
+```
+
+# 4. Build DESeq dataset object with DESeq2
+
+Now that we've imported all of the genes.results files, we need to get them in a format that can be read by DESeq2. This is essentially a RangedSummarizedExperiment data class that is used by many different Bioconducator tools.
+
+### <span style="color: blue;">4.1 Mutate genes with length 0 to a length of 1
+
+[Before making the DESeqDataSet, we have to clean up the rsem_counts object. Rows in the length matrix that have values of 0 cannot be read into DESeq2 to build a DESeqDataSet. This occurs when the reference transcriptome used for quantification has transcripts that have not been assigned lengths. These may be predicted transcripts or orphans. **Thus, this may not be an issue with all data sets!** However, our dataset generated a number of transcripts with a length of 0. In order to analyze our data, they either have to be removed from the analysis or must be imputed with some value. Here, I've imputed them with a value of 1 to make them valid so that DESeq2. This should not have any bearing on the downstream analysis as it simply allows them to be put into the DEseqDataSet object. (They will all likely be omitted during filtering anyway.)]{style="color: blue;"}
+
+```{r}
+rsem_counts$length[rsem_counts$length == 0] <- 1
+
+## Keep in mind that this may not be a necessary step in all cases.
+```
+
+### 4.2 Make a DESeqDataSet object with the imported genes.results files
+
+To make the DESeqDataSet object, we use the DESeqDataSetFromTximport function built into DESeq2:
+
+*The colData argument is your sample table that designates which sample is assigned to which group.*
+
+*The design argment is what grouping you want to use for your comparison.*
+
+```{r echo=T, message=F, warning=F}
+dds <- DESeqDataSetFromTximport(rsem_counts, colData = samples, design = ~ group)
+
+```
+
+### 4.3 Filter out undetected genes/transcripts
+
+Next, we want to filter out genes or transcripts that aren't expressed in our samples. This is important for performing the hypergeometric analysis. Leaving these in skews the DiffExp analysis. The code is set to keep only genes/transcripts were there are at least 10 counts in at least 6 samples (at least 6 samples must have 10 counts or more for that gene for it to be included). These values were selected because a read count higher than 10 *MAY* be legitimate and we have 6 individual samples per group. **These thresholds should be set based on the specific parameters of your experiment**.
+
+```{r}
+keep <- rowSums(counts(dds) >= 10) >= 6
+dds_filtered <- dds[keep,]
+
+## By assigning the filtered gene set to a different object, we can always go back to the original gene set if we want and adjust parameters or analyze the unfiltered data.
+```
+
+# 5. Perform gene expression analysis with DESeq2
+
+Now that we have a DESeqDataSet object of our data, we can proceed with the differential expression analysis. We are going to do this several ways for the types of analyses we want to perform downstream.
+
+**1. Generate a table of the total number of genes measured**
+
+We will generate a table of expression for all of the genes/transcripts tested. This will be useful when performing enrichment analyses downstream as it will provide reference set of genes to compare to when performing enrichment analysis for pathway or gene ontology analyses.
+
+**2. Generate a table of genes with log2 FC of 1 and a padj value \< 0.1**
+
+This the default settings for DESeq2 differential expression analysis.
+
+**3. Generate a table of genes with log2 FC of 1 (actual FC = 2) and a padj value \< 0.05**
+
+The default parameter for padj of \<1.0 is not very strict. If the data is highly variable between samples, a less strict p value threshold is tolerable. However, this often leads to a large number of genes being called differentially expressed and can be prone to false positives. We will, therefore, tighten the threshold to a padj value of 0.05.
+
+### 5.1.1 Perform differential gene expression analysis on the total gene set
+
+We'll start by just getting the differential expression values for all the genes that were expressed in our tissue, i.e., no cutoffs for LFC or p value. This is simply running DEseq2 on the filtered counts matrix and then producing a comparative analysis between the levels in the group (adult and fetal). This will also perform the estimateSizeFactors function to produce normalized counts for each gene. 
+
+```{r echo=T, message=F, warning=F}
+de_matrix <- DESeq(dds_filtered) ## perform the DE analysis with DESeq. Generates a DESeqDataSet object with results stored as metadata columns.
+```
+
+### 5.1.2 Extract the table of normalized counts
+We will need the table of normalized counts from the DESeqDataSet for performing analyses downstream. 
+
+Extract the normalized counts and write them to a file.
+```{r}
+norm_counts<-counts(de_matrix, normalized=TRUE)
+
+write.table(norm_counts, file="normalized_counts.txt", col.names = TRUE, quote = FALSE, sep="\t")
+```
+
+### 5.1.3 Extract the results of DE analysis for all genes
+We want to get the DE results for the entire set of genes in the experiment. This will be useful for browsing offline and will be the basis for identifying interesting DE genes.
+```{r}
+res_total <- results(de_matrix, contrast=(c("group", "adult", "fetal"))) ## use the "results" function to extract the results generated generated in the previous line. 
+```
+
+
+### 5.1.4 Run a principal component analysis to see how well the samples segregate
+Next, we'll perform a PCA on our sample data just to look at how the samples are distributed. There are a number of ways to prep the data for this. The way I learned, and still do today, is to perform a variance stabilizing transform (VST) on the data to normalize the variance and plot the PCA from the VST data.
+
+```{r echo=T, message=FALSE, warning=FALSE}
+vsd<-vst(dds, blind=FALSE) ## vsd = variance stabilized data. 
+vst
+plotPCA(vsd, intgroup ="group",) ## plot the PCA based on differences between the "group", i.e., fetal vs. adult.
+
+## the plotPCA function uses the top 500 features for PC analysis. This can be changed by changing the value for the ntop argument.
+```
+```{r}
+pdf(file="PCA.pdf")
+plotPCA(vsd, intgroup ="group",)
+dev.off()
+```
+
+You may want to see the ID of the points in cases where you have a few samples that don't segregate and you want to check those specific samples. To plot the PCA with the labels, you have to make a table object with the plotPCA function and then plot with ggplot and add the options you want for labels:
+```{r}
+library(ggplot2)
+
+pca<-plotPCA(vsd, intgroup ="group", returnData=TRUE,) ## plot the PCA based on differences between the "group", i.e., fetal vs. adult.
+
+ggplot(data=pca, aes(x=PC1, y=PC2, colour=group))+
+  geom_point() + geom_text(aes(label = name, vjust=-1))
+```
+
+Export the PCA plot as a file to use in a manuscript or presentation:
+```{r}
+pdf(file="PCA-annotated.pdf")
+ggplot(data=pca, aes(x=PC1, y=PC2, colour=group))+
+  geom_point() + geom_text(aes(label = name, vjust=-1))
+dev.off()
+```
+
+### 5.1.5 Add the official gene symbols to the DE gene matrix and export as a table
+Because of the reference used for the alignment and feature counting, the DE gene list as it is only has Ensembl IDs for each gene. To perform further analyses we'll need the official gene symbols. I also think it's a good idea to include the Entrez IDs as well since some pathway analysis tools prefer these. We will use the AnnotaionDbi package to map the Ensembl IDs to the HGNC symbols and Entrez IDs. 
+
+First, load and compile the AnnotationDbi and the org.Hs.eg.db packages. The org.Hs.eg.db is the database that contains all of the gene mappings for human. If you are working with mouse or another species, you'll need to install and load the appropriate database. AnnotationDbi works for all of them.
+```{r}
+packages <- c("AnnotationDbi", "org.Hs.eg.db")
+installed<- packages %in% rownames(installed.packages())
+
+if (any(installed == FALSE)) {
+  BiocManager::install(!installed)
+}
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+```
+
+Next, we have to modify the Ensembl IDs in the matrix. By default, the Ensembl IDs contain and trailing decimal number, e.g., ENSG00000000003.15. The org.Hs.eg.db database lists the Ensembl IDs as just the base Ensembl ID, i.e., ENSG00000000003. Thus, we have to trim the trailing decimal number from all the Ensembl IDs. I prefer to simply add an additional column containing the trimmed ID so that no information is lost. 
+```{r}
+## Create a column that has the ensembl gene variant ids (these are already in as row names). These will contain the trailing decimal number.
+res_total$ensembl_var<-row.names(res_total) ## we're calling this the ensembl_var since the trailing number refers to the specific variant that is associated with the gene.
+
+## This bit of code will use a regular expression to identify the trailing digits and perform an empty replacement. The resulting gene will be written to a list and saved as object ensembl_gene
+ensembl_gene<-gsub(pattern="\\.[0-9]*$", replacement="", res_total$ensembl_var) 
+
+## Now make a new column containing the Ensembl IDs without the trailing number. We'll call this simply ensembl.
+res_total$ensembl<-ensembl_gene
+```
+
+Now take a look at the matrix to make sure it looks correct:
+```{r}
+head(res_total)
+```
+
+Now, we can perform the mappings to the HGNC official symbols and Entrez IDs using the values in the ensembl field.
+```{r}
+## Map the Ensembl gene IDs to the HGNC symbol and save as a new column:
+res_total$symbol<-mapIds(org.Hs.eg.db, keys=res_total$ensembl, keytype = "ENSEMBL", column="SYMBOL")
+
+## Map the Enzembl gene IDs to the Entrez gene IDs and save as a new column:
+res_total$entrez<-mapIds(org.Hs.eg.db, keys=res_total$ensembl, keytype = "ENSEMBL", column="ENTREZID")
+
+head(res_total) ## Take a look at the table:
+```
+
+
+The current row names are listed with the Ensembl IDs along with a decimal and a trailing number which is ***the version identifier*** for that gene. Some functions in DESeq2, such as plotCount, require that the gene name be entered by its row name which means that in order to use the function, you will have to know the Ensembl ID ***and*** the version identifier ending for the gene you are interested in, which can be cumbersome to track down. To simplify things, its best to change the row names to the Ensembl IDs without the version identifier ending.   
+```{r}
+row.names(res_total)<-res_total$ensembl
+row.names(norm_counts)<-res_total$ensembl
+
+## NOTE: It's possible to use the gene symbols instead of the Ensembl IDs. However, there are often genes that do not have official gene symbols. If there are missing values, you can't use those for row names. Such is the case with this data set. Thus, I opted to use the Ensembl IDs without the version ending.
+```
+
+Now we can export the DE data frame.
+```{r}
+write.table(res_total, file="de_gene_matrix.txt", quote=FALSE, sep="\t", col.names = TRUE, row.names = FALSE)
+```
+
+
+### 5.2.1 Generate a table of genes with log2 FC of 1 and a padj value \< 0.1**
+This could be done in Excel but I think it's easier to just make a separate analysis in R with the cutoffs. First, we need to remove the rows with NA values for the gene symbol. These occur when the reference used for alignment and feature counting includes features that aren't standard mRNAs, e.g., pseudogenes. If you use a more abbreviated reference list, you may not need to do this. I typically err on the side of more when selecting the reference.
+```{r}
+## Remove NAs:
+res_total_noNAs<-na.omit(res_total)
+
+## Subset the DE results with only the genes that satisfy the thresholds set, i.e., LFC=1 and padj<0.1
+res_total_lfc1_padj01<-res_total_noNAs[res_total_noNAs$log2FoldChange>=1 | res_total_noNAs$log2FoldChange<=-1 & res_total_noNAs$padj<=0.1,]
+```
+
+Now take a quick look at the results to see how many genes you're left with.
+```{r}
+res_total_lfc1_padj01
+```
+
+2525 genes is a decent number of DE genes. If we wanted to reduce the number we could either use a stricter adjusted p value threshold, a stricter LFC threshold, or both. Tightening the adjusted p value is the best way since it controls for how tightly expressed the genes are between samples. 
+
+Export the table
+```{r}
+write.table(res_total_lfc1_padj01, file="de_genes_lfc1_padj01.txt", row.names = FALSE, col.names = TRUE, quote=FALSE, sep="\t")
+```
+
+
+###5.3.1 Generate a table of genes with log2 FC of 1 and a padj value \< 0.05**
+```{r}
+## Subset the DE results with only the genes that satisfy the thresholds set, i.e., LFC=1 and padj<0.05
+res_total_lfc1_padj005<-res_total_noNAs[res_total_noNAs$log2FoldChange>=1 | res_total_noNAs$log2FoldChange<=-1 & res_total_noNAs$padj<=0.05,]
+```
+
+Now take a quick look at the results to see how many genes you're left with.
+```{r}
+res_total_lfc1_padj005
+```
+
+Reducing the adjusted p value to 0.05 didn't change much. The number of genes only dropped by 55. It seems that either threshold is sufficient. Export the table
+```{r}
+write.table(res_total_lfc1_padj005, file="de_genes_lfc1_padj005.txt", row.names = FALSE, col.names = TRUE, quote = FALSE, sep="\t")
+```
+
+### Next steps
+This is all for this part of the pipeline. I want to keep the segments short enough that certain topics can be found easily. In the next one, I'll go over visualization of the data with volcano plots and heat maps.

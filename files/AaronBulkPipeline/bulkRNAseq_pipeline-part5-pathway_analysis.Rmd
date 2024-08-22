@@ -1,0 +1,153 @@
+---
+title: "Bulk RNA-seq pipeline part 5 - Pathway analysis"
+output: html_document
+date: "2024-05-20"
+---
+
+# 1. Introduction
+
+This module covers pathway analysis and covers the basic differences between pathway analysis and GO. It goes over several of the different pathway databases and resources that are most commonly used. First, we will set the working directory. 
+
+```{r setup, include=TRUE}
+knitr::opts_knit$set(root.dir = '/Users/aaron/Dropbox (Personal)/Aaron_denDekker/BFX/Miller_RNAseq/')
+```
+
+# 2. Background
+Pathway analysis is very similar to GO analysis but differs in that contains topology between genes. Thus, the role of a particular gene product is illustrated in the pathway. For example, MDM2 is an inhibitor of p53. p53 can also activate MDM2. These interactions are depicted in the *p53 signaling* KEGG pathway: 
+
+<center>
+
+![](/Users/aaron/Dropbox (Personal)/Aaron_denDekker/BFX/Miller_RNAseq/p53-signaling.png){width="50%"}
+
+</center>
+
+Thus, knowing what pathways are impacted in your experiment can provide even more information than GO or GSEA analysis. 
+
+# 3. Pathway Databases
+There are a number of databases devoted to molecular pathways. The ones mentioned here only apply to pathways involving genes and/or gene products. There are databases that incorporate other molecules such drugs that aren't mentioned. Each of these have their own unique applications. And using them for data analysis is also unique to each. If necessary these may be touched on in a separate module.
+
+### 3.1 KEGG
+There are several databases that can be used to perform pathway analyses. The most common one is the *Kyoto Enyclopedia of Genes and Genomes* database, commonly referred to as KEGG. This database has been around since 1995 and was developed by Minoru Kanehisa at Kyoto University. It was originally free but now requires a license which is pretty expensive and also requires you to have a pretty good background in computer programming to use directly. This is the most common database used in online "push button" GUI tools you'll find so it's accessible even if you don't have a license for direct access. However, there are several issues with this:
+
+**1. Often not current.** Even though online tools utilize the KEGG database for performing pathway analysis, the databases are often outdated. The KEGG database is updated regularly and it's difficult for many free online tools to update their database to reflect updates in the KEGG database. Also, the providers of free tools often do not maintain regular licenses. Thus, the KEGG database that is available may be several years old. For example, the online tool DAVID (Database for Annotation, Visualization and Integrated Discovery) which is maintained by the NIH, did not update their KEGG database at all between 2016 and 2021. Lacking current knowledgebase updates is actually a problem across all freeware tools.
+
+**2. KEGG itself isn't expanding.** Although there are are regulat updates to the KEGG database, there aren't really any new additions to the database. The vast majority of the updates are done to reflect changes in ID status of particular genes and proteins. Although, the base KEGG pathways are informative, there is a lack of novel pathways in KEGG.
+
+### 3.2 Reactome
+Another pathway database that is highly used is the [Reactome database](https://reactome.org). Reactome is an open access, peer-reviewed, and manually curated pathway database that attempts to integrate ALL molecular pathways. The Reactome database is well-maintained. If you are a developer, the database is free to access (at least for academic purposes) via an API. So, you can build your own tools to use it if you wish. However, there are a number of tools that can be used to analyze data using the Reactome database.
+
+### 3.3 WikiPathways
+[WikiPathways](https://www.wikipathways.org) is an open access database that is contributed to by the scientific community. Although it isn't technically peer-reviewed in the classic sense, pathways are reviewed by contributors and users. One of the major benfits of WikiPathways is that as more pathways are elucidated and published, they are being added to the WikiPathways database. This allows for identification of novel mechanisms in your data. Many tools now access and analyze data using the WikiPathways database and there are a number of Cytoscape plugins to visualize and curate the results. 
+
+### 3.4 Others
+When you are looking at pathways, you want to be able to visualize results using the pathway "map". There a number of databases in addition to the ones I've mentioned above, e.g. Biocarta. However, many of these are not easily accessed. Additionally, these databases aren't as well maintained or contributed to. In the analyses below, I am more concerned with the output of the databases I've mentioned above since these are the most comprehensive and well maintained. 
+
+# 4. Performing pathway analysis
+### 4.1 Statistical tests
+Pathway analysis is typically performed using over-enrichment analysis (ORA) similar to GO analysis. Thus, although there is topology on the pathway showing activity relationships between genes in the pathway, this information is not included when performing the analysis. There is a test that does take these relationships into account called impact analysis that was developed by Adi Tarca at Wayne State University. There is a Bioconductor package that uses this algorithm called SPIA (Signaling Pathway Impact Analysis) that was built and is maintained by Adi Tarca’s group. However, there are a couple of caveats to using SPIA:
+
+**1. It only applies to KEGG:** SPIA was designed for use with KEGG pathways only. So, it can’t be leveraged against Reactome or WikiPathways (at least not right now).
+
+**2. It does not contain an up to date version of the KEGG database:** The SPIA package implements an old version of the KEGG pathway database that was available when the software was originally written in 2012. Although the SPIA Bioconductor package is regularly maintained to work with updates in R, the KEGG database is not updated. However, it does allow you to load in your own KEGG database if you have access to it. But, as I mentioned above, to do this you have to have a license which is upwards of $5000 annually.
+
+Despite these limitations, the SPIA package can be still be very useful. We will come back to using SPIA later.
+
+### 4.2 Running a pathway analysis using ORA
+There is a huge amount of tools that can be used to run an enrichment analysis for pathway analysis and fall into 2 main categories, R/Bioconductor packages or online tools. R/Biocnductor packages, such as clusterProfiler, are going to be more up to date since the majority of them allow, or require, that you upload the database you want to analyze your data against. I have already mentioned above the limitations imposed on the different databases and although, you have the ability to upload a up-to-date version of a database, that doesn’t mean you actually have an up-to-date version of a database, e.g. KEGG. Additionally, R/Bioconductor packages are more cumbersome because they require a good working knowledge of the particular package and that involves a learning curve. Thus, I am actully going to focus here on using online tools for pathway analysis since they are easy to use. The tool that we will be using is EnrichR because I think they do a better job at keeping the databases updated.
+
+### 4.3 Using EnrichR
+EnrichR is an online tool maintained by the Ma’ayan lab at the Icahn School of Medicine at Mount Sinai in NYC. To access EnrichR, click [here](https://maayanlab.cloud/Enrichr/). If you’ve gone through the GO module, I’ve already gone over EnrichR. But here, we’re going to go through the output focusing on pathway databases.
+
+**1.** Once you open to EnrichR homepage, you will be presented with the ability to input just your set of interesting genes. To do this, simply copy and paste your genes from your DE gene file.
+
+**2.** As always, we want to make sure that we also input our reference gene set. Above the box to input your genes, there is a paragraph describing the operation. Within that, there is the option to adding your reference set: **“Also, you can now try adding a background.”** When you click this, EnrichR will populate the backgroun box with its default reference gene list. **You do not want to use this.** Select all the genes in the background box and delete them. Then, copy and paste the genes from your reference gene list into the box. Now hit *Submit*. It may take a few moments to run.
+
+**3.** Once the results are generated, select the *Pathways* tab at the top. The screen will show thumbnails of each database tested and each will be populated the top 5 hits. There are many, many more databases run by EnrichR than I mentioned above, but many of these I find less useful and less accessible.
+
+**4.** Click on a thumbnail of a database that you are interested in and it will repopulate with the top hits of that database in a bar chart corresponding to the p-value of the hit (default). If you click on the chart, it will change to a different bar chart sorted by a different metric (*combined score ranking* or *rank based ranking*.) If you want to get more information about the results, select Table to generate a table of the hits. These will be sorted by the same metrics, but include the p-value, the adjusted p-value after multiple comparisons, the odds ratio, and the combined score. If you want to know more about how these are calculated, check out [this paper](https://bmcbioinformatics.biomedcentral.com/articles/10.1186/1471-2105-14-128) or you can check the [FAQs page](https://maayanlab.cloud/Enrichr/help#basics).
+
+If you want to plot the output of the data, you will need to download the table using the *Export entries to table* button at the bottom of the table view. Unfortunately, EnrichR does not include links to external resources, i.e, you can’t click on a hit to jump to a page for the particular pathway tested. To do this, you will need to go out of EnrichR and navigate to the website for the particular database, e.g. Reactome, and input the pathway name or ID. This will allow you to view the structure of the pathway and the genes in it. Although, it doesn’t overlay the DE genes from your dataset on it. There are modules built for [Cytoscape](https://cytoscape.org) that allow you to do this but these are beyond the scope of this module.
+
+### 4.4 Using SPIA
+### 4.4.1 Impact analysis
+As mentioned above, SPIA is a R/Bioconductor package to perform pathway analysis using the impact analysis algorithm. In essence, impact analysis calculates the total accumulate perturbation in a pathway based on the differential expression of your genes. Specifically, a perturbation factor for each gene is calculated based on its expression and the expression of genes upstream from it that act on it:
+
+<center>
+
+![*g* represents the gene for which the perturbation factor is calculated. *u* represents the upstream genes that may act on it. Impact analysis calculates a factor based on the the expression of *g* and the partial effect from *u* where the impact acting on *g* is divided by the number of downstream targets of *u*.](/Users/aaron/Dropbox (Personal)/Aaron_denDekker/BFX/Miller_RNAseq/Impact_analysis.png)
+
+</center>
+<br>
+
+Then, a p-value is calculated for each pathway using the perturbation of factors for all of genes in the pathway and also a p-value based on standard over-enrichment.
+
+Finally, a combined p-value is calculated from both the ORA p-value (*p*ORA or *p*NDE) and the perturbation p-value (*p*PERT).
+
+If this seems complex, don’t worry about it. It’s basically just a way to include the topology of the genes in pathway when performing the analysis. If you want to know more about you can read the original articles that describe impact analysis [here](https://academic.oup.com/bioinformatics/article/25/1/75/302846?login=false) and [here](https://genome.cshlp.org/content/17/10/1537.long).
+
+### 4.4.2 Running SPIA
+The steps to run SPIA are as follows.
+
+First, read in the gene matrix we generated. This is the same as what is done for GO analysis.
+
+```{r}
+gene_matrix<-read.table("de_gene_matrix.txt", header=TRUE)
+gene_matrix<-na.omit(gene_matrix) ## remove any rows with missing values
+
+head(gene_matrix,10)
+```
+
+Now, we subset the matrix based on the differential expression thresholds.
+```{r}
+de_matrix<-gene_matrix[gene_matrix$padj<=0.05,]
+de_matrix<-de_matrix[de_matrix$log2FoldChange >=1 | de_matrix$log2FoldChange <= -1,]
+```
+
+Now, we want just the LFC values and the Entrez IDs. SPIA will only work with the Entrez ID numbers! This is why included this in the matrix when we performed the DE analysis.
+```{r}
+de_list<-de_matrix$log2FoldChange
+names(de_list)<-as.vector(de_matrix$entrez)
+```
+
+Make the list of background genes.
+```{r}
+bkgd_list<-as.character(gene_matrix$entrez)
+```
+
+Find and remove any duplicates from the DE gene list.
+```{r}
+dups<-unique(names(de_list[which(duplicated(names(de_list)))]))
+de_list<-de_list[!(names(de_list) %in% dups)] # remove duplicates from sigGenes
+```
+
+Now, load and run SPIA. If you haven’t downloaded SPIA already, you will need to use the Bioconductor installer to install it. The code here checks if SPIA is installed and, if not, uses the Bioconductor installer to install it.
+```{r quiet=TRUE}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+library(BiocManager)
+
+packages <- c("SPIA")
+installed<- packages %in% rownames(installed.packages())
+
+if (any(installed == FALSE)) {
+  BiocManager::install(!installed)
+}
+
+library(SPIA)
+```
+
+
+Now we have to set up the spia data object that will be used to run SPIA.
+```{r}
+res=spia(de=de_list, all=bkgd_list, organism="hsa", nB=2000, plots=TRUE, beta=NULL, combine="fisher", verbose=FALSE, data.dir = system.file("extdata/", package="SPIA"))
+
+head(res,10)
+```
+
+Plot the output of the -log10(pPERT) vs -log10(pNDA). We will first need to remove any rows that contain NAs.
+```{r}
+res<-na.omit(res)
+plotP(res, threshold=0.05) 
+```
+
+The graph plots each KEGG term by it's *p*-value due to the perturbation score and it's *p*-value based on overenrichment. The most impactful terms will have the most contribution from both. This is reflected in the table. The red and blue lines designate the thresholds set by Bonferroni multiple comparisons test (red) and false discovery rate (blue). 

@@ -1,0 +1,152 @@
+---
+title: "Bulk RNAseq pipeline part 4 - GSEA analysis"
+output: html_document
+date: "2024-05-29"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = '/Users/aaron/Dropbox (Personal)/Aaron_denDekker/BFX/Miller_RNAseq/')
+```
+
+# 1. Introduction & Background
+
+This module discusses Gene Set Enrichment Analysis (GSEA). The GSEA tool works with its own database, the Molecular Signatures Database (mSigDB), that draws from a wide variety of resources, e.g. KEGG, GO, WikiPathways, but also includes the Hallmark database, that is maintained by groups at UCSD and Broad who developed GSEA. The Hallmark database is similar to Gene Ontology in that there is no topology between terms but differs in that it does not have the parent-child structure. The GSEA tool is free to use and can be downloaded [here](https://www.gsea-msigdb.org/gsea/login.jsp) (you will have to register first).
+
+This module will go over some of the background of GSEA, how it compares to GO and pathway analysis, and how the algorithm differs from a standard enrichment analysis. The analysis will be mostly done outside of the R environment in the GSEA tool. However, there are tools that utilize GSEA and those will be discussed.
+
+# 2. How GSEA works
+
+By the name, GSEA sounds like it is identical to a standard over-representation analysis (ORA) used in GO and pathway analyses. It is, however, much different. Over-representation analysis tests whether a number of genes from your data are over-represented, or enriched, in genes associated with a particular mechanism. The statistic used in ORA (Fisher's exact test) requires a threshold to be set where the genes above the threshold are selected as candidates. This causes a problem in situations where genes may be very near the threshold and are eliminated because they are just below the cutoff. This skews the number of candidate genes considered and can have substantial impacts on the final results.
+
+GSEA attempts to remedy this by considering all the genes and, instead of discrete cutoffs, ranking their impact. First, genes are ranked based on expression from high to low. For each functional term, the algorithm "walks" down the list of genes and checks whether a gene is included in the list of genes for that term. If it is included, the algorithm applies an "enrichment score" with a value accordant with its expression, i.e., the higher the differential expression, the higher the value of the enrichment score. If the gene tested is NOT included in the list of genes of the specific term, a value is deducted from the score. The highest value calculated for the enrichment score is the final score for that term. GSEA uses a modified \*Kolmogorov-Smirnov (KS) statstic to test whether the enrichment score is more than expected from the genes than if the were randomly distributed. This can be confusing but it isn't overly necessary to understand all of the math. The important things are to have a general idea of the method and how to interpret the enrichiment score.
+
+\*We briefly touched on the KS statistic in the GO analysis module
+
+<center>
+
+![The green line shows how the enrichment score increases when a gene is encountered that is included in the set of genes associated with the given term and drops when the gene is not included.](/Users/aaron/Dropbox%20(Personal)/Aaron_denDekker/BFX/GSEA/results/nov30/my_analysis.Gsea.1701379899835/enplot_KEGG_MEDICUS_REFERENCE_AUTOPHAGY_VESICLE_NUCLEATION_ELONGATION_MATURATION_SEQUESTOSOME_1_LIKE._89.png){width="50%"}
+
+</center>
+
+# 3. Prep data to run GSEA
+
+### 3.1 Download the GSEA tool
+
+To run GSEA, you will first need to download the GSEA tool from the [GSEA website](https://www.gsea-msigdb.org/gsea/login.jsp). You will have to register first.
+
+### 3.2 Build the necessary tables
+
+The GSEA tool requires input files in a very specific format. I've described how to construct each of these below.
+
+### 3.2.1 Expression dataset file
+
+First, you will need to generate an expression dataset file. There are several formats that it can be in that will accepted and each has it's peculiarities. I've found it easiest to construct the expression dataset using the *gene cluster text file (GCT)* format. This contains the normalized counts for each gene measured across each sample. The description is as follows and I've included the top several lines of my own .GCT file as a reference. 
+
+First, open up Excel or some other suitable text editor. In the very first cell (top row, first column), type in "#1.2" (don't include the quotes). Next, deterimine the number of genes that are included in your experimental dataset. This would be the total number of genes used in your reference set since all of the genes are going to included. Input this number in the first cell on the second row. Into the second cell on the second row, input the number of samples in the experiment. 
+
+The expression data will begin on the 3rd row. The first column of the third row should have the word "NAME" and below it should list the gene IDs in the official HGNC gene ID nomenclature, e.g. RPE65, TP53. The second column of the 3rd line should say "Description". The cells underneath the header do not have to contain anything specific. These are ignored during the analysis. However, you should include something here. Simply NA for each is acceptable. Since I had Ensembl IDs in my data file, I simply input the Ensembl ID for each. But this is not required. 
+
+Starting at the 3rd cell (column) on the 3rd row, you will enter the expression data. Each column should correpsond to a different sample and the header of each should be unique. The normalized counts for each gene should be input for each specific sample. Once all the data is input, save the file as a text file and force add the extension .gct.
+
+Here is an example of a GCT file in the proper format (only the top 3 genes are shown:
+
+<center>
+
+![](/Users/aaron/Dropbox%20(Personal)/Aaron_denDekker/BFX/Miller_RNAseq/GCT_example.png)
+
+<center>
+
+
+### 3.2.2 Phenotype Data file
+Next, you will need to construct a file that tells GSEA which sample is classified in which group, i.e. treated vs. control. Again, this must be done in a very specific manner using the categorical class (CLS) file format. 
+
+First, open up Excel. In the first cell, type in the total number of samples regardless of group. In the second column on the first row, type in the number of levels. This is the number of groups. You may have more than 2 and although GSEA will only analyze 2 groups at a time, you can assign as many groups as necessary. In the third column of the first row, input the number 1. It's always 1.
+
+On the second row, in the first column input a hash sign (#). Starting at the second column, input the different groups you have present in your samples. Each column gets a unique entry for each group.
+
+On the third row, input the group label that corresponds to the sample as it is situated in the GCT file. In other words, if the layout of the sample is 2 treated samples followed by 3 control samples in the GCT file, input treated, treated, control, control, control. Do this for all of the samples. Once everything is included, save as a text file and force add the .cls extension.
+
+Here is how it should look:
+
+<center>
+
+![](/Users/aaron/Dropbox%20(Personal)/Aaron_denDekker/BFX/Miller_RNAseq/CLS_file_example.png){width=65%}
+
+<center>
+
+# 4. Loading and running GSEA
+### 4.1 Loading data
+Open the GSEA tool. On the left hand panel, select the "Load data" icon. If you have never run it before, select "Method 1: Browse for files". Go to the directory containing your GCT expression dataset and CLS phenotype file and select those and hit Open (or whatever the button is for your machine.) The program will load them and let you know if there are errors. There may be minor errors in the formatting, e.g. the number of total genes on the second row of the GCT file doesn't match the actual number of genes listed. 
+
+![](/Users/aaron/Dropbox (Personal)/Aaron_denDekker/BFX/Miller_RNAseq/GSEA_load_data.png)
+
+### 4.2 Running the GSEA tool
+Once, the datasets are loaded, select the "Run GSEA" button. There will be a list of fields to select for your datasets. I've discussed the main required options in detail here.
+
+![](/Users/aaron/Dropbox (Personal)/Aaron_denDekker/BFX/Miller_RNAseq/GSEA_run_GSEA.png)
+
+**Expression dataset:** Click the dropdown and select the expression dataset (there should only be one unless you loaded multiple GCT files.) 
+
+**Gene sets database:** Click the dropdown and select the gene set you want to use for the analysis. There will be tabs for human gene sets, mouse gene sets, local files in the GMX or GMT format, and local files in the GRP format. Select the tab for your experiment and the whole list of options will drop down listed by what category they are in, e.g. H for human hallmark sets, M3 for mouse regulatory sets. You can look at the different categories [here](https://www.gsea-msigdb.org/gsea/msigdb/index.jsp) to decide what set(s) you want to run.
+
+**Note:** The default for the the GSEA tool is to sync to the MSigDB server at the BROAD. However, there can often be issues with the connection, such as firewalls. If you run into issues connecting, the best way to get around it is to download the geneset you want to run your data against from the BROAD and run GSEA locally. To do this follow these steps. 
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**i.** Select the File > Preferences in the appication bar at the top of the screen. 
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**ii.** Un-check the box for *Connect over the internet.*
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**iii.** Restart GSEA. 
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**iv.** Download the gene set you want to run. You will need to 
+go to the [MSigDB page.](https://www.gsea-msigdb.org/gsea/msigdb/index.jsp) 
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**v.** Load the GMT file for the gene set you downloaded on the first page of the GSEA tool. (See step 4.1 above.)
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**vi.** Select the the *Local GMX/GMT* tab and select the gene set you want to use
+
+**Number of permutations:** This is the number of permutatons used for multiple comparisons testing. The default is 1000. There is no reason to change this value.
+
+**Phenotype labels:** You have the option of selecting the direction of the comparison, i.e. treatment over control or control over treatment. Click the dropdown and select the comparison you want to use. 
+
+**Collapse/Remap to gene symbols:** The default option is *Collapse*. If you are able to connect to the MSigDB server, you can leave the *Collapse* option in place. If you can't connect to the MSigDB server and are using the gene sets locally, change the option *No Collapse*. You may also download the chip you would like to collapse to but this isn't necessary.
+
+**Permutation type:** his is what data is used to perform multiple comparisons, i.e. phenotype or gene set. Leave the option as *phenotype*.
+
+**Chip platform:** If you selected the *Collapse* option for *Collapse/Remap to gene symbols*, you will need to select the chip you are using. This will correspond to the names you are using in your dataset. For example, if your species is human and your gene names are the official HGNC gene IDs you would use the *Human_Gene_Symbolwith_Remapping_MSigDB.v.2023.2.Hs.chip*. If you are analyzing using local gene sets and have selected *No Collapse* above, you can leave this blank. 
+
+**Basic dields \& Advanced fields:** There are some useful additional options that are available in these dropdowns. Some are useful in particular situations but I'm not discussing them here. 
+
+##$ 4.3 Running and retrieving results
+Once all of the fields are ready, hit **Run** at the bottom of the interface. I may take a few minutes to run depending on the size of your expression set and the number of gene sets within the database you are running. 
+
+The *GSEA reports* box in the bottom left will give the status of your run. Once it's finished, it should (hopefully) say "Success (with warnings)". 
+
+<center>
+![](/Users/aaron/Dropbox (Personal)/Aaron_denDekker/BFX/Miller_RNAseq/GSEA_reports.png){width=40%}
+</center>
+
+
+You can click on the line in the status box and it will open a tab in a browser with your results. 
+
+<center>
+
+![](/Users/aaron/Dropbox (Personal)/Aaron_denDekker/BFX/Miller_RNAseq/GSEA_results_HTMLpage.png)
+
+</center>
+
+If you want to see each of the components of the HTML page, click *Show results folder* at the bottom of the *GSEA reports* box. It will show the directory in your local drive with all of the components of the HTML report listed individually.
+
+# 5. Making custom gene sets.
+In addition to the extensive set of gene sets available in mSigDB, GSEA also allows you to build your own custom gene sets. These could be genes listed in a specific manuscript or genes that are curated for a specific mechanism that isn't otherwise available. I've built some custom datasets that can be found in the directory /Users/aaron/Dropbox (Personal)/Aaron_denDekker/BFX/GSEA/custom_genesets/
+
+To make your own custom gene set, these are most easily constructed using he GMT format. If you used the *Local GMX/GMT* option for *Gene sets database* above, the GMT files downloaded from the MSigDB are in this format. 
+
+The easiest way is to use Excel (or some other comparable spreadsheet program). In the first column you will provide a name for the gene set, e.g. *Retinoid Cycle*. The second column should contain some sort of description. Starting at the 3rd column, you will enter the genes you want to include in the gene set in their own cell. If you are using a text editor, each field should be tab-delimited.
+
+Each gene set will be on a separate row with a space in between each row. You can combine as many different gene sets as you want into a single file. Save the file as tab-delimited text file and force add the .gmt extension. 
+
+To run the file, you will need to load the file as normal and select the *Local GMX/GMT* tab in the *Gene sets database* line and run the rest normally.
+
+```{r}
+
+```

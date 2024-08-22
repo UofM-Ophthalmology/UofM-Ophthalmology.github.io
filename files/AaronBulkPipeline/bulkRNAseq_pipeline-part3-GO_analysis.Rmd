@@ -1,0 +1,198 @@
+---
+title: "Bulk RNA-seq pipeline part 3- GO Analysis"
+output: html_document
+date: "2024-05-09"
+---
+
+# 1. Introduction
+This module will go over gene ontology (GO) analysis. The first parts go into how GO works and how it is calculated. The latter parts go over using topGO to perform a GO analysis. To start, we need to set our working directory.
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = '/Users/aaron/Dropbox (Personal)/Aaron_denDekker/BFX/Miller_RNAseq/')
+```
+
+# 2. Gene Ontology
+### 2.1 Background
+One of the first steps in exploring mechanisms in RNA-seq data is to perform a GO analysis. Before doing this, its worth describing the structure of GO terms. These are important for interpreting the output of a GO analysis.
+
+First, GO terms are separated into 3 different groups referred to as namespaces: Biological Process (BP), Molecular Function (MF), and Cellular Component (CC). Terms in the BP and MF groups often appear to be very similar, e.g. the MF term *catalytic activity* and the BP term *postive regulation of catalytic activity* while terms in the CC group are focused on the subcellular location that the translated proteins of the genes of interest would be found, e.g., *cytoplasm*.
+
+Second, the genes involved with GO terms do not include any topology. In other words, we do not know how the gene products interact in the context of the term. For example, the genes JAK2 and TNF are both associated with the BP *term positive regulation of protein kinase B signaling*. However, the GO term doesn't contain information about if or how these 2 gene products work on each other in the process. Nor is there information on the type of action they make in the process. They are only known to be associated with it. When interpreting the results of GO analysis, it's important to take this into account. Just because an upregulated gene or set of genes is associated with a GO term doesn't necessarilly mean that the GO term is up-regulated. For all you know, every one of the upregulated genes could be a negative regulator of the process in the GO term. (This is specifi ally for MF and BP terms. The CC term is pretty self-explanatory.)
+
+Third, GO terms are built as a heirarchial tree. This is structured as more generic terms that are associated with a large number of genes (parent terms) giving rise to more specific terms that contain a smaller number of genes that are associated with more discrete processes (child terms). Each term is calculated independently, i.e., if the genes found to be significant with a child term are also significant in a parent term, they are both reported. This can be problematic when you have a large number of genes that fall into more generic terms. The more interesting terms will be the more specific ones and those will end up being ranked lower. However, there are methods to filter out more generic terms and zero in on the more interesting terms. These are described below in the analysis.
+
+### 2.2 Fisher's exact test
+A GO analysis is performed using an *enrichment analysis*, and the vast majority of the time this is done using a \*Fisher's exact. This tests whether a group of genes taken from your data set is over-represented, or enriched, in a pre-determined set of genes associated with a given process. The basis of a (Fisher's test calculates the likelihood that a given process is affected in your dataset based on *a*) how many of your differentially expressed (DE) genes are also associated with the given process, (*b*) how many genes in the process are not in your DE gene set, (*c*) how many genes in the DE list are not associated with the process, and (*d*) how many genes are neither DE nor associated with the given process:
+
+<center>
+
+![](./fishers_go_term.png){width="30%"}
+
+</center>
+
+For *b*, these genes are associated with the GO term *and are also in the reference list*. If a gene was not tested, i.e, not expressed in the experiment, they are not considered. For *d*, these genes are the genes in the reference set that are not DE and also not associated with the given process. Thus, *the genes included in the reference set matter.* It is common for online tools to allow you to input your genes of interest, i.e., DE genes, but make entering a reference set optional. **You should never perform an enrichment analysis without using the reference set from your experiment!**. These tools use a generalized gene set as a reference when you don't input one. This gene set will include all genes in the genome and can include things such as pseudogenes and untranslated genes, i.e., the default reference set will be much larger than the reference set for your experiment. Thus, all of the calculations will be inflated and which will result in false positives.
+
+
+
+
+# 3. topGO
+### 3.1 Background
+TopGO is an R/Bioconductor package developed by Adrian Alexa who developed algorithms for filtering out false positive GO terms which which are discussed below. Although topGO isn't the most user friendly tool, it offers several things that make it superior to most other tools out there (at least the ones I've used):
+
+**1. Flexibility** topGO performs a Fisher's exact test by default but includes other statistical tests built in and, if a particular statistic isn't already available, topGO also allows the user to input their own statistic test as a function. 
+**2. Up to date results** TopGO requires that you map genes to GO IDs using a database of your choosing. Since the database isn't built in to the software, you define what mappings get used. Thus, you don't have to worry about whether the mappings are up to date. This is a huge problem with online "push button" tools that are often not maintained regularly and have extremely out of date databases.
+**3. Filtering out false postive results** The classical method of GO analysis calculates each GO term independently which almost always yields many generic, uninformative terms. TopGO was designed to filter out false positive GO terms and give the most concise results. There are other tools\* that include filtering methods but it isn't always clear what is being done. TopGO allows you to have full control over the analysis parameters.
+
+\*If you're familar with iPathwayGuide from Advaita, it uses topGO under the hood to perform GO analysis.
+
+### 3.2 GO term filtering algorithms
+As mentioned above, one of the biggest issues with GO analysis is the generation of false positive results. However, there have been several algorithms developed to deal with this issue, of which the *elim* and *weight* methods developed by [Alexa *et al*](https://academic.oup.com/bioinformatics/article/22/13/1600/193669) are the most common. The *elim* algorithm begins at the lowest levels of the GO graph at the most specific terms and calculates their enrichment p value. If the term is significant, the term is reported. Then, when the parent term is analyzed, the genes that were associateed with the significant child term are eliminated from the analysis of the parent and only the remaining genes are considered. The parent term will be reported if it can be calculated significant with only these remaining genes. However, if the child term was not calculated as significant, all of the DE genes associated with that term will be counted for its parent as if the two are independent. This continues until a term is found to be significant. This reduces the number of false postives reported.
+
+With the *weight* method, on the other hand, if several terms that are found to be significant are child terms of a common parent, the parent term is calculated and reported as significant. *But parent terms above this are eliminated.* Thus, the significant sibling terms attribute more weight to the parent term. The original manuscript showed that the *weight* algorithm identified less false positives than the classical method and missed few true positives, while the *elim* algorithm had even less false positives than *weight* but missed more true positives. To address this, topGO uses a combination of both the *elim* and *weight* methods called *weight01* by default. Most of the time, the *weight01* method is sufficient but I've also found that there are times when one of the other methods yields more useful results. 
+
+# 4. GO analysis with topGO
+### 4.1 Load the necessary packages, and import and parse the necessary data
+The basic data object required for topGO analysis is a topGOdata object. To build this we will utilize the gene lists we previously generated. First, load the necessary packages. Install with BiocManager::install function if not already installed:
+```{r, quiet=TRUE, include=FALSE}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+library(BiocManager)
+
+packages <- c("topGO", "org.Hs.eg.db")
+installed<- packages %in% rownames(installed.packages())
+
+if (any(installed == FALSE)) {
+  BiocManager::install(!installed)
+}
+
+library(topGO)
+library(org.Hs.eg.db) ## needed to map genes to GO IDs
+```
+
+Next, read in the entire DE gene matrix we generated:
+```{r}
+de_matrix<-read.table("de_gene_matrix.txt", header=TRUE)
+de_matrix<-na.omit(de_matrix) ## remove any rows with missing values
+```
+
+Now we want to calculate a score for each gene to define whether it's "interesting". topGO accepts a function that defines what genes in your reference dataset are interesting and uses those for the GO analysis. However, the list is a numeric vector and, thus, can only contain one argument. So, if you use p values for your metric, then you select all genes with a p value below a threshold regardless of the lof FC in expression. Conversely, if you use logFC as the metric, it disregards p value. To bypass this, we calculate a z score for each gene by taking the absolute value of logFC (since directionality doesn't matter in this case) and multiplying it by the negative log base 10 of the adjusted p value:
+```{r}
+de_matrix$score<-ifelse((abs(de_matrix$log2FoldChange))>=1 & de_matrix$padj<0.05,
+                        ((abs(de_matrix$log2FoldChange))*(-log10(de_matrix$padj))),
+                        0.00)
+
+```
+
+Now create a named vector of just the scores with the gene symbols assigned:
+```{r}
+gene_list<-de_matrix$score
+names(gene_list)<-de_matrix$symbol
+head(gene_list,50)
+```
+
+### 4.2 Build the topGOdata object
+Now, we'll build a map of GO terms to the associated genes. We do this because GO terms can be mapped to a variety of identifiers such as microarray probes, gene symbols, entrez IDs, etc. In our case, we are using the official gene symbols which we will get from the org.Hs.eg.db. **This step must be done separately for each GO category (BP, MF, CC) so we want to name it accordingly.**
+```{r, quiet=TRUE, warning=FALSE} 
+GO2genes.BP <- annFUN.org(
+      whichOnto = 'BP',
+      feasibleGenes = NULL, ## no filtering of genes. all genes from GO are included.
+      mapping = 'org.Hs.eg.db',
+      ID = 'symbol')
+
+GO2genes.MF <- annFUN.org(
+      whichOnto = 'MF',
+      feasibleGenes = NULL,
+      mapping = 'org.Hs.eg.db',
+      ID = 'symbol')
+
+GO2genes.CC <- annFUN.org(
+      whichOnto = 'CC',
+      feasibleGenes = NULL,
+      mapping = 'org.Hs.eg.db',
+      ID = 'symbol')
+
+```
+
+So that we can use the z score to select for our genes of interest, we have to make a function declaring the cutoff:
+```{r}
+selection<-function(score){
+  return(score>=1.3) ## this is the value of a |1| * -log10(0.05)
+}
+```   
+
+
+No we apply the mapping to build the topGOdata object and input our selection function. This also has to be done separately for each category. 
+```{r, quiet=TRUE, include=FALSE}
+GOdata.BP <- new('topGOdata',
+      ontology = 'BP',
+      allGenes = gene_list,
+      annot = annFUN.GO2genes,
+      geneSel=selection,
+      GO2genes = GO2genes.BP,
+      nodeSize = 10)
+```
+
+```{r}
+## visualize the output
+GOdata.BP
+```
+
+We can see the even though we set no filtering of genes from the GO database, there are 3546 genes considered not feasible for analysis and reduces the number of significant genes from 2348 to 1817. This is because these genes don't have GO assignments. This isn't uncommon.
+
+### 4.3 Run topGO and visualize results
+Now we'll run topGO using a Fisher's exact test with the several of the filtering algorithms to compare them. 
+```{r, quiet=TRUE, include=FALSE}
+go.bp.w01=runTest(GOdata.BP, algorithm='weight01', statistic='fisher')
+go.bp.elim=runTest(GOdata.BP, algorithm='elim', statistic='fisher')
+go.bp.wt=runTest(GOdata.BP, algorithm='weight', statistic='fisher')
+go.bp.classic=runTest(GOdata.BP, algorithm='classic', statistic='fisher')
+
+```
+
+Generate a table of the results:
+```{r}
+results.table.bp=GenTable(GOdata.BP, fis.w01=go.bp.w01, fis.elim=go.bp.elim, fis.wt=go.bp.wt, fis.classic=go.bp.classic, orderBy="fis.elim", ranksOf="fis.elim", topNodes=50)
+results.table.bp
+```
+```{r, message=FALSE, results='hide'}
+pdf(file="bp.elim.pdf")
+par(cex = 0.5)
+showSigOfNodes(GOdata.BP, score(go.bp.elim), firstSigNodes = 10, useInfo = 'all')
+dev.off()
+```
+```{r, message=FALSE, results='hide'}
+pdf(file="bp.w01.pdf")
+par(cex = 0.5)
+showSigOfNodes(GOdata.BP, score(go.bp.w01), firstSigNodes = 10, useInfo = 'all', )
+dev.off()
+```
+```{r, message=FALSE, results='hide'}
+pdf(file="bp.wt.pdf")
+showSigOfNodes(GOdata.BP, score(go.bp.wt), firstSigNodes = 10, useInfo = 'all')
+dev.off()
+```
+
+```{r, message=FALSE, results='hide'}
+showSigOfNodes(GOdata.BP, score(go.bp.classic), firstSigNodes = 5, useInfo = 'all')
+```
+You can also run topGP using a Kolmogorov-Smirnov (KS) statistic test. However, topGO is finicky when running the KS statistic. Using the KS statistic works fine when using the weight01 or classic algorithms. But, the elim algorithm induces an error. I've reached out to the community about this and I've attempted to debug it based on feedback but I haven't been to make it work.Regardless, we'll run the KS statistic here with the weight01 algorithm to see how it compares to the Fisher results.
+```{r, quiet=TRUE, include=FALSE}
+go.bp.ks.w01=runTest(GOdata.BP, algorithm='weight01', statistic='ks')
+```
+
+Generate a table of the results:
+```{r}
+results.table.bp.ks=GenTable(GOdata.BP, ks.w01=go.bp.ks.w01, fis.w01=go.bp.w01, fis.elim=go.bp.elim, orderBy="ks.w01", ranksOf="fis.w01", topNodes=50)
+results.table.bp.ks
+```
+
+You can see that using the KS statistic here reports much more uninformative terms than the Fisher's statistic does. For reasons we won't get into, the KS test has been documented to be more susceptible to outliers compared to the Fisher's test. Thus, I typically go with the Fisher's test.
+
+# 5. Using online tools for GO analysis
+I laid out why I prefer topGO above. There are, of course, a number of other tools that can be used to perform GO analysis. If you would rather use another tool, I recommend using EnrichR. The group who maintains EnrichR attempts to keep the databases up to date and it's really simple to use. 
+
+EnrichR can be reached here: [EnrichR](https://maayanlab.cloud/Enrichr/)
+
+When you use EnrichR, simply input the list of DE genes into the box. Make sure to select the *background* option in the description above and input your reference gene list. EnrichR will input a default list here, so make sure you select all of the default genes, delete them, and then add your list. Again, do NOT use EnrichR, or any other tool, without including the reference set of genes that is specific to your experiment.
+
+When interpreting your results, keep in mind that the statistics used by EnrichR are slightly different than what is used in topGO. The Fisher's test is used but there are nuanced differences. You can read more about the specifics in this [article](https://bmcbioinformatics.biomedcentral.com/articles/10.1186/1471-2105-14-128) .

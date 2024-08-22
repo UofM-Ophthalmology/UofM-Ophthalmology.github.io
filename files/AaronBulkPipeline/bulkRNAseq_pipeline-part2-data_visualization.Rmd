@@ -1,0 +1,145 @@
+---
+title: "Bulk RNA-seq pipeline part 2 - Visulaization of data with volcano plots and heatmaps"
+output: html_document
+date: "2024-05-08"
+---
+
+# 1. Introduction
+
+This module will pick up from the previous module where we performed DE analysis with DESeq2. I've tried to set the modules up so that they can be used independently if you want. In this module, we'll go over making volcano plots and heat maps. First, we need to load the packages we're going to use. Then, we will need to load up the data tables we exported in the previous module as dataframes to work with here.
+
+# 2. Load and compile dependencies and set working directory
+
+Similar to part 1, we first want to load all of the software packages that we'll use and set the working directory to read from. As in part 1, the code here will check whether a package is installed and, if not, install it. We'll be using functions within the *tidyverse* to build our volcano plot and heatmap. Note that these are NOT Bioconductor packages and are, thus, loaded using the standard R installer.
+
+Package installation:
+```{r, quiet=TRUE, message=FALSE, include=TRUE}
+packages<-c("tidyverse", "RColorBrewer", "ggrepel")
+installed<- packages %in% rownames(installed.packages())
+
+if (any(installed == FALSE)) {
+  install.packages(!installed)
+}
+
+library(tidyverse) # includes ggplot2, for data visualisation. dplyr, for data manipulation.
+library(RColorBrewer) # for a colourful plot
+library(ggrepel) # for nice annotations
+```
+
+Set working directory:
+```{r setup, include=TRUE}
+knitr::opts_knit$set(root.dir = '/Users/aaron/Dropbox (Personal)/Protocols/Bioinformatics/Bioinformatics_Scripts_From_Aaron/Bioinformatics Resources/')
+```
+
+# 3. Import the gene tables
+To make heat maps we will need the DE gene table of all the genes in the experiment. We also want the gene list we made with the cutoffs for LFC of |1| and adjusted p value of 0.05. For heat maps, we will need the table of normalized counts.
+```{r}
+de_matrix<-read.table("de_gene_matrix.txt", header=TRUE)
+res_total_lfc1_padj005<-read.table("de_genes_lfc1_padj005.txt", header = TRUE)
+norm_counts<-read.table("normalized_counts.txt", header=TRUE)
+```
+
+# 4. Make a volcano plot of the DE gene set
+### 4.1 Set thresholds for differntiall expression
+First, we'll add a column to table designating whether the gene is differentially expressed and, if so, if it is up or down-regulated.
+```{r}
+de_matrix$diffexpressed <- "NO"
+de_matrix$diffexpressed[de_matrix$log2FoldChange >= 1 & de_matrix$padj <= 0.05] <- "UP"
+de_matrix$diffexpressed[de_matrix$log2FoldChange <= -1 & de_matrix$padj <= 0.05] <- "DOWN"
+```
+
+### 4.2 Extract genes of interest (optional)
+For this volcano plot, we want to label points of particular genes of interest. To do this we will read in our list of genes from a file and make new column in the dataframe with them.  
+
+The list is in a text file called "interesting_genes.txt" and we will read it in using read_lines since the genes are in rows. If you have a list of genes where they are in a tab- or comma-separated (.txt, .tsv, or .csv) document with each gene in the column, instead use the read.csv function instead and set the appropriate delimiter. 
+```{r}
+interesting_genes<-read_lines("/Users/aaron/Dropbox/Protocols/Bioinformatics/Bioinformatics_Scripts_From_Aaron/Bioinformatics Resources/interesting_genes.txt")
+
+interesting_genes ## peek and check that your list is in the appropriate format
+```
+
+Next, we will make an abbreviated data frame of just these genes.
+```{r}
+sig_genes <- de_matrix %>%
+  filter(symbol %in% interesting_genes) ## make a dataframe of just the interesting genes
+
+sig_genes ## check the output to confirm its in the appropriate format
+```
+
+### 4.3 Construct the volcano plot
+Now we can construct our volcano plot and use the objects we set up in parts 4.1 and 4.2 to label and annotate it. 
+
+First, set up a color scheme. This is optional as ggplot has a default scheme. But, setting up your own allows you to have more control over the appearance.
+```{r}
+cols <- c("UP" = "red", "DOWN" = "blue", "NO" = "grey") ## The color scheme is set to label points based on the value in the diffexpressed column which we set up in part 4.1.
+```
+
+Now, generate the plot. Each annotation function is described in the comments to the right:
+```{r}
+volcano<-ggplot(data = de_matrix, 
+                aes(x = log2FoldChange, 
+                    y = -log10(padj))) +
+  geom_point(aes(colour = diffexpressed), ## the points will be colored different based on the value in the diffexpressed column. This uses the default color scheme but we will override that with the scale_color_manual function below. 
+             alpha = 2, 
+             shape = 16,
+             size = 1) + 
+  geom_point(data = sig_genes, ## this well draw a circle around points that correspond to our genes of interest.
+             shape = 21,
+             size = 3,
+             colour = "black") +
+  geom_vline(xintercept = c(-1, 1), ## draws the vertical line showing the thresholds for log2FC
+             col = "black", 
+             linetype = 'dashed') +
+  geom_hline(yintercept = -log10(0.05), ## draws the horizontal line showing the threshold for adjusted p value
+             col = "black", 
+             linetype = 'dashed') +
+  scale_color_manual(values = cols, ## this overrides the color scheme from above and labels the legend
+                     labels = c("Downregulated in adult RPE", "Not significant", "Upregulated in adult RPE")) +
+  labs(colour = 'Expression', ## labels the axes
+       x = expression("log"[2]*"FC"), 
+       y = expression("-log"[10]*"p-value")) +
+  geom_label_repel(data = sig_genes, 
+                   ## labels the points of genes of interest. The geom_label_repel function attempts to arrange the labels so that they are easily viewed on the plot.,
+                   size = 2.5, 
+                   aes(label = symbol),
+                   box.padding = 1,
+                   force = 2,
+                   nudge_y = 3,
+                   show.legend = FALSE)
+volcano  
+```
+
+The image shown here may vary from the the actual volcano plot that you export. The following code will export as a PDF which can be further manipulated in Illustrator if necessary.
+```{r, quiet=TRUE, warning=FALSE}
+pdf("volcano.pdf", width = 6, height = 6)
+plot(volcano)
+invisible(dev.off())
+```
+
+# 5. Make a heat map
+Now we'll make a heat map of all the genes. This is simply just another way to visualize how the genes are expressed between the groups. There are a number of different packages you can use to make heatmaps but R's *heatmap* function is simple and really useful for simple visualization.
+
+First, we have to convert the normalized counts object into a numeric matrix. We then use the heatmap function in the base R to make the heatmap. 
+```{r}
+mat <- data.matrix(norm_counts)
+
+heatmap(mat, scale="row", na.rm=TRUE)
+## Here, we've scaled the colorization on the row which is the gene. It's a sort of normalization to account for the distribution of the counts across all of the genes. 
+```
+
+```{r, quiet=TRUE, warning=FALSE}
+pdf("heatmap.pdf", width = 10, height = 13)
+heatmap(mat, scale="row", na.rm=TRUE)
+invisible(dev.off())
+```
+By default, the R heatmap function performs heriarchial clustering (this can be turned off if you want to retain the structure of the matrix in the heatmap. 
+
+We can see that the fetal and adult samples cluster together but the clustering for the genes is less obvious. There are definitely areas that are "opposing" but it's likely that most of the variation falls into a relatively small group of genes.
+
+As mentioned above, there are a number of tools to generate a heatmap. Some of these other tools are more optimal for sequencing data and are really useful when you want to have more control over the parameters. But for simply graphing the entire gene set, the base R heatmap function is fine.
+
+# Next steps
+Now that we have some basic renderings of the data, we can start to tease out the interesting parts of the data set. Next, we'll go over gene ontology and pathway analysis to identify mechanisms involved with our DE genes using both standard enrichment and gene set enrichment analysis (GSEA).
+
+
+
