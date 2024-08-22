@@ -7,7 +7,7 @@ redirect_from:
   - /resources.html
 ---
 
-# Resources Pages
+<!-- # Resources Pages -->
 
 ## Shared from Lev & Jason
 
