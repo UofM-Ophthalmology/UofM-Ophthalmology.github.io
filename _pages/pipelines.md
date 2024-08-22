@@ -30,7 +30,7 @@ Aaron guide [one](/files/AaronBulkPipeline/bulkRNAseq_pipeline-part1-data_Import
 
 **Download works the Rmd file is changed when loading into R**
 
-Interactive R session (link)[https://colab.research.google.com/drive/1GlL9s94rBmENBgzFLyZyR60i4Owqc83U?usp=sharing] hosted on Google colab
+Interactive R session [link](https://colab.research.google.com/drive/1GlL9s94rBmENBgzFLyZyR60i4Owqc83U?usp=sharing) hosted on Google colab
 
 ## [Single-cell](#scRNA)
 
