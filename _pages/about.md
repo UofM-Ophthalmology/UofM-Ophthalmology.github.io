@@ -5,6 +5,7 @@ author_profile: false
 redirect_from:
   - /about/
   - /about.html
+  - /about.md
 ---
 
 Explain the purpose of the site and the above tabs.
