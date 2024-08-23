@@ -39,7 +39,7 @@ Common packages:
 * Seurat
 * ...
 
-### Processes
+### Pipelines/Scripts
 
 * Basic Processing
   * from 10X
