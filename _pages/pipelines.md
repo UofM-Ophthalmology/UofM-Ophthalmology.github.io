@@ -45,11 +45,15 @@ Common packages:
   * from 10X
   * other data source
 * Visualization
+  * Scatter plots
+  * Violin plots
+  * Upset plots
 * Integration
 * Differential Expression
 * Pseudotime & Velocity
 * Cell-cell communication
 * Comparison to external datasets
+* GO/GSEA/etc
 
 
 Others:
